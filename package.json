@@ -1,0 +1,12 @@
+{
+  "name": "nuxeve",
+  "version": "0.0.2",
+  "description": "Eve Stats for conky etc",
+  "author": "Joe Eaves <jinux@alluha.net>",
+  "dependencies": {
+    "async": "^1.5.0",
+    "cheerio": "^0.19.0",
+    "evenode": "git://github.com/nicholascloud/evenode.git",
+    "eventemitter2": "^0.4.14"
+  }
+}
