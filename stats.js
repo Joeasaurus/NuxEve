@@ -1,36 +1,62 @@
 #!/usr/bin/env node
 "use strict";
 
-var fs      = require('fs'),
-	path    = require('path'),
-	os      = require('os'),
-	evenode = require('evenode'),
-	cheerio = require('cheerio'),
-	async   = require('async'),
-	EventEmitter2 = require('eventemitter2').EventEmitter2;
+var evenode        = require('evenode'),
+		cheerio        = require('cheerio'),
+		EventEmitter2  = require('eventemitter2').EventEmitter2;
 
-class Config {
-	constructor(path) {
-		this._config = JSON.parse(fs.readFileSync(path));
+class APIConfig {
+	constructor(acc_id, api_key) {
+		this._config = {
+			"keyID": acc_id,
+			"vCode": api_key,
+			"host": "api.eveonline.com"
+		};
 	}
 	get config() { return this._config; }
 }
 
-let EvePilot = function(char_name, char_id) {
-	this.name    = char_name;
-	this.charid  = char_id;
+class EveCharacter {
+	constructor(name, id) {
+		this.name = name;
+		this.ID = id;
+	}
 }
 
-class NuxEve extends EventEmitter2 {
-	constructor(config) {
-		super();
-		this._eve    = evenode(config);
-		this._chars  = new Map();
-		this._loaded = false;
-		this.loadCharacters((err) => {
-			if(err) return console.log(err); 
-			this._loaded = true;
-			this.emit('charsLoaded', this._chars);
+class EvePilot {
+	constructor(api) {
+		var events = new EventEmitter2();
+		this.characters = new Map();
+		this._eve = evenode(api.config);
+		this.loadCharacters((char) => {
+			events.emit('char-loaded', char);
+		});
+		this.events = events;
+	}
+
+	getBalance(char_name, formatted) {
+		if(this.characters.has(char_name)) {
+			let gotChar = this.characters.get(char_name);
+			let charBal = formatted ? gotChar.balance.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",") : gotChar.balance;
+			return charBal;
+		}
+		return NaN;
+	}
+
+	loadCharacters(callback) {
+		let instance = this;
+
+		this._eve.account.characters((err, data) => {
+			if(err) return callback(err);
+
+			instance._parseAPIData(data, (err_two, loadedData) => {
+				if(err_two) return callback(err_two);
+
+				instance.characters.set(loadedData.name, new EveCharacter(loadedData.name, loadedData.characterID));
+				instance._loadBalance(loadedData.name, () => {
+					callback(instance.characters.get(loadedData.name));
+				});
+			});
 		});
 	}
 
@@ -45,76 +71,25 @@ class NuxEve extends EventEmitter2 {
 		});
 	}
 
-	loadCharacters(callback) {
-		if(!callback) 
-			var callback = function(err) {console.log(err);};
+	_loadBalance(name, callback) {
+		let instance = this;
+		let id = this.characters.get(name).ID;
 
-		let queue = async.queue((task, queue_callback) => {
-			this.loadBalance({"name": task.name, "id": task.characterID}, (err, balance) => {
-				if(err) {
-					console.log(err);
-				} else {
-					this._chars.set(task.name, new EvePilot(task.name, task.characterID));
-					this._chars.get(task.name)['balance'] = balance;
-				}
-				queue_callback();
-			});
-		});
-
-		this._eve.account.characters((err, data) => {
-			if(err) return callback(err);
-
-			this._parseAPIData(data, (err_two, loadedData) => {
-				if(err) return callback(err);
-
-				queue.push({
-					"name": loadedData.name, 
-					"characterID": loadedData.characterID
-				});
-			})
-		});
-
-		queue.drain = () => {
-			callback();
-		};
-
-	}
-
-	loadBalance(charData, callback) {
-		if(! charData || ! charData.id)
-			return "No char data!";
-		if(!callback) 
-			var callback = function(err) {console.log(err);};
-
-		this._eve.character.accountBalance(charData.id, (err, data) => {
+		this._eve.character.accountBalance(id, (err, data) => {
 			if(err) return callback(err);
 
 			this._parseAPIData(data, (err_two, loadedData) => {
 				if(err) return callback(err_two);
 
-				callback(null, loadedData.balance);
+				instance.characters.get(name)['balance'] = loadedData.balance;
+				callback(loadedData.balance)
 			});
 		});
 	}
-
-	get chars() {
-		if(this._loaded)
-			return this._chars;
-		return {};
-	}
-
-	getBalance(char_name, formatted) {
-		if(this._loaded && this._chars.has(char_name)) {
-			let gotChar = this._chars.get(char_name);
-			let charBal = formatted ? gotChar.balance.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",") : gotChar.balance;
-			return charBal;
-		}
-		return 0;
-	}
 }
 
-let config = new Config(path.join(__dirname, 'config.json'));
-let ne = new NuxEve(config.config);
-ne.once('charsLoaded', (data) => {
-	console.log(ne.getBalance("Jinux", true) + " ISK");
+let config = new APIConfig(process.env.EVE_API_KEY, process.env.EVE_API_SECRET);
+let ne = new EvePilot(config);
+ne.events.on('char-loaded', (char) => {
+	console.log(char);
 });
